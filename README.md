@@ -2,7 +2,7 @@
 RSCAM Group 1 Project (Multilevel Monte Carlo for SDEs)
 
 # Contributors 
- Olena Balan
+ Olena Balan \n
  Chantal Kool
  Isabell Linde
  Josh McKeown
