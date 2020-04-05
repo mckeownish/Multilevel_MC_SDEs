@@ -1,5 +1,6 @@
 """
 Multilevel Monte Carlo Implementation for RSCAM Group 1
+Olena Balan, Chantal Kool,Isabell Linde, Josh Mckeown, Luke Shaw
 _______________________________________________________
 Built-in functions for Euro_payoff, Asian_payoff, Lookback_payoff, Digital_payoff, and anti_Euro_payoff payoffs.
 Built-in functions (diffusion/JD)_path(_min/_avg) for diffusion and jump diffusion, coarse/fine final, avg, min asset prices.
