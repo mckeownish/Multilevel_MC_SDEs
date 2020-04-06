@@ -687,6 +687,8 @@ class Option:
             K (float) : Strike price (overridden and set to None for Lookback options)
             T (float) : Time to maturity for option 
         """
+        if X0!=K:
+            raise ValueError('Attempting to instantiate a non At-the-Money strike: S(0) is not equal to K')
         self.alpha_0=alpha_0
         self.X0=X0
         self.r = r
