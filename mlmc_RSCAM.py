@@ -109,6 +109,28 @@ def Digital_payoff(self,N_loop,l,M):
         Pc=np.exp(-r*T)*K*(Xc>K).astype(np.int_) #Payoff at coarse level
         return Pf,Pc
 
+def Amer_payoff(self,N_loop,l,M):
+    """
+    Payoff function for American Put option. self.path should return Xf,Xc - N_loop-by-3 arrays.
+    For a non-dividend-paying asset, an American Call will have the same value as a Euro Call.
+    
+    Parameters:
+        self(Option): option that function is called through
+        N_loop(int): total number of sample paths to evaluate payoff on
+        l(int) : discretisation level
+        M(int) : coarseness factor, number of fine steps = M**l
+    Returns:
+        Pf,Pc (numpy.array) : payoff vectors for N_loop sample paths (Pc=0 if l==0)
+    """
+    K=self.K;T=self.T;r=self.r
+    Xf,Xc=self.path
+    Pf = Xf[:,2] + Xf[:,1]*np.maximum(K-Xf[:,0],0)*np.exp(-r*T)
+    if l == 0:
+        return Pf,0 #ignore Pc
+    else:
+        Pc = Xc[:,2] + Xc[:,1]*np.maximum(K-Xc[:,0],0)*np.exp(-r*T)
+        return Pf,Pc
+
 #######################################################################################################################
 #Antithetic funcs
 def diffusion_anti_path(self,N_loop,l,M):
@@ -468,7 +490,7 @@ def JD_path_avg(self,N_loop,l,M):
         #Initialise asset price and time
         dWc=0;tau=0;tf=0;tc=0;dtc=0
         Sf=X0;Sc=X0;
-
+        avg_f=0;avg_c=0
         ##Algorithm Start
         tau+=jumptime(scale=1/lam)
 
@@ -503,21 +525,19 @@ def JD_path_avg(self,N_loop,l,M):
             dWf=np.random.randn()*np.sqrt(dt) #Fine BI for adaptive timestep
             dWc+=dWf #Increment coarse BI
             
-            avg_f=0.5*dt*Sf #S_n
+            avg_f+=0.5*dt*Sf #S_n
             Sf+=sde(Sf,dt,tf,dWf) #Develope fine timestep
             avg_f+=0.5*dt*Sf #S-_n+1
             tf=tn #Fine path now at j*T/Nsteps, set as left boundary
 
             if j%M==0: #If reached coarse timepoint, then bring coarse path up to this point
-                avg_c=0.5*dtc*Sc #S_n
+                avg_c+=0.5*dtc*Sc #S_n
                 Sc+=sde(Sc,dtc,tc,dWc)#...Develop coarse path
                 avg_c+=0.5*dtc*Sc #S-_n+1
                 tc=tn #Coarse path now at j*T/Nsteps
                 dtc=0
                 dWc=0 #...Re-initialise coarse BI to 0
 
-        avg_f-=0.5*dt*Sf
-        avg_c-=0.5*dtc*Sf
         Af[num]=avg_f
         Ac[num]=avg_c
         num+=1 #One more simulation down
@@ -911,7 +931,7 @@ class Option:
         return suml 
 
     ##MLMC function
-    def mlmc(self,eps,M=2,anti=False,N0=10**3):
+    def mlmc(self,eps,M=2,anti=False,N0=10**3, warm_start=True):
         """
         Runs MLMC method for given option (e.g. European) which returns an array of sums at each level.
         ________________
@@ -926,6 +946,7 @@ class Option:
             M(int) = 2 : coarseness factor
             anti(bool)=False : whether to use antithetic estimator
             N0(int) = 10**3 : default number of samples to use when initialising new level
+            warm_start(bool)=True: whether to save calculated alpha as alpha_0 for future function calls
 
         Returns: sums=[np.sum(dP_l),np.sum(dP_l**2),sumPf,sumPf2,sumPc,sumPc2,sum(Pf*Pc)],N
             sums(np.array) : sums of payoff diffs at each level and sum of payoffs at fine level, each column is a level
@@ -964,7 +985,7 @@ class Option:
                 alpha = max(0.5,-a[0]/np.log(M))
         
             if sum(dN > 0.01*N) == 0: #Almost converged
-                if abs(Yl[-1])>(M**alpha-1)*eps*np.sqrt(0.5):
+                if max(Yl[-2]/(M**alpha),Yl[-1])>(M**alpha-1)*eps*np.sqrt(0.5):
                     L+=1
                     #Add extra entries for the new level and estimate sums with N0 samples 
                     V=np.concatenate((V,np.zeros(1)), axis=0)
@@ -973,7 +994,9 @@ class Option:
                     sqrt_h=np.concatenate((sqrt_h,[np.sqrt(M**L)]),axis=0)
                     sums=np.concatenate((sums,np.zeros((7,1))),axis=1)
                     sums[:,L]+=self.looper(N0,L,M,anti)
-                    
+        if warm_start:
+            self.alpha_0=alpha #update with estimate of option alpha
+            print(f'Saved estimated alpha_0 = {alpha}')
         return sums,N
 
 class JumpDiffusion_Option(Option):
@@ -1407,7 +1430,143 @@ class Digital_GBM(GBM_Option):
         """
         D2 = (np.log(self.X0/self.K)+(self.r+0.5*self.sig**2)*self.T)/(self.sig*np.sqrt(self.T)) - self.sig*np.sqrt(self.T)
         return self.K*np.exp(-self.r*self.T)*norm.cdf(D2)
+
+class Amer_GBM(GBM_Option):
+    """
+    Class for Geometric Brownian Motion American Put Options. Inherits from GBM_Option class.
+    __________________
+    payoff = Amer_payoff
+    __________________
     
+    Attributes:
+        exerciseBoundary(func) = None : exercise boundary function for option.If None, sets to default B(t)=(K-0.8*sqrt(T-t))+
+        __Inherited__
+    """
+    payoff=Amer_payoff
+
+    def __init__(self,exerciseBoundary=None,**kwargs):
+        super().__init__(**kwargs)
+        if exerciseBoundary==None:
+            self.exerciseBoundary = lambda t: np.maximum(self.K-0.8*np.sqrt(self.T-t),0)
+            
+    def path(self,N,l,M):
+        """ 
+        The path function for Euler-Maruyama GBM, which calculates path-wise values for American option pricing.
+
+        Parameters:
+            self(Option): option that function is called through
+            N_loop(int): total number of sample paths to evaluate payoff on
+            l(int) : discretisation level
+            M(int) : coarseness factor, number of fine steps = M**l
+        Returns:
+            Xf,Xc (numpy.array) : N-by-3 arrays s.t X[:,0]=final asset price, X[:,1] = final crossing probability, 
+                                  X[:,2] = expected payoff if barrier hit.
+        """
+        if M!=2:
+            raise ValueError("M must be equal to 2 for American Option pricer. Please use M=2.")
+        T=self.T;X0=self.X0;sig=self.sig;K=self.K;r=self.r
+        sde=self.sde;exerciseBoundary=self.exerciseBoundary
+        Nsteps=M**l
+        dt=T/Nsteps
+        sqrt_dt=np.sqrt(dt)
+
+        #Initialise fine, coarse asset prices; coarse Brownian increment (BI)
+        dWc=np.zeros(N_loop)
+        Xf = np.zeros((N_loop, 3))
+
+        # path variables X_t 
+        Xf[:,0] = X0* np.ones(N_loop)
+
+        # Probability of not having crossed yet
+        Xf[:,1] = np.ones(N_loop)
+
+        # Payoff part 1 --> barrier hit during some interval
+        Xf[:,2] = np.zeros(N_loop)
+        Xc = Xf.copy()
+
+        for j in range(1,Nsteps+1):
+            t_ = (j-1)*dt
+            dWf = sqrt_dt*np.random.randn(N_loop)
+            dWc += dWf
+
+            Xleft = Xf[:,0]
+
+            # advance path variable
+            Xright = Xleft + sde(Xleft,dt,t_,dWf)
+
+            # evaluate barrier on left end point
+            leftBarrier = exerciseBoundary(t_)
+            tfMid = t_ + dt/2
+
+            # evaluate barrier on right end point 
+            rightBarrier = exerciseBoundary(t_+dt)
+
+            # evaluate barrier at mid point
+            midBarrier = exerciseBoundary(tfMid)
+
+            Prob1 = np.exp(-2 * np.maximum(Xleft - leftBarrier, 0) * np.maximum(Xright - rightBarrier,0) / ((sig**2)*dt*Xleft**2))
+
+            # update payoff        
+            Xf[:,2] += Xf[:,1]*Prob1 *np.maximum(K-midBarrier,0)*np.exp(-r*(tfMid))
+            # update crossing probability
+            Xf[:,1] *= (1.0-Prob1)
+            # update path value
+            Xf[:,0] = Xright
+
+            if j%M==M/2:
+                #If at midpoint between coarse times, store dWc for calculation of Xmid
+                halfdWc=dWc
+
+            if j%M==0:
+                t_=(j-1)*M*dt
+                Xleft = Xc[:,0]
+
+                # advance path variable
+                Xright = Xleft + sde(Xleft,M*dt,t_,dWc)
+                Xmid = Xleft + 0.5*(Xright-Xleft) + sig*Xleft*(halfdWc - 0.5*dWc)
+
+                # evaluate barrier at left end point
+                leftBarrier = exerciseBoundary(t_-M*dt)
+
+                tcMid = t_ + M*dt/2
+
+                # evaluate barrier at right end point
+                rightBarrier = exerciseBoundary(t_+M*dt)
+
+                # evaluate barrier at mid point
+                midBarrier2 = exerciseBoundary(tcMid)
+
+                # prob of hitting the barrier
+                midBarrier1 = np.exp(0.5*(np.log(rightBarrier)+np.log(leftBarrier)))
+                Prob11 = np.exp(-2*np.maximum(Xleft-leftBarrier,0) * np.maximum(Xmid-midBarrier1,0) /(dt*(sig**2)*(Xleft**2)))
+                Prob12 = np.exp(-2*np.maximum(Xmid-midBarrier1,0)* np.maximum(Xright-rightBarrier,0)/(dt*(sig**2)*(Xleft**2)))
+
+                Prob1 = (1.0-(1.0-Prob11)*(1.0-Prob12))
+                # update payoff
+                Xc[:,2] += Xc[:,1]*Prob1*np.maximum(K-midBarrier2,0)*np.exp(-r*tcMid)
+                # update crossing probability
+                Xc[:,1] *= (1-Prob1)
+                # update path variable
+                Xc[:,0] = Xright
+
+        return Xf,Xc
+    def asset_plot(self,L=6,M=2):
+        """
+        Plots underlying asset price for GBM with given sde function (EM) on a fine and coarse grid differing by factor
+        of M, and exercise boundary for parent American Option.
+        Modelling SDE:
+        ~~ dS=(r+drift)*S*dt+sig*S*dW~~
+
+        Parameters:
+            self(Option): option that function is called through
+            L(int) : fine discretisation level 
+            M(int) : coarseness factor s.t number of fine steps = M**L
+        """
+        super().asset_plot(L,M)
+        dt=self.T/M**L
+        times=np.arange(self.T+dt,dt)
+        plt.plot(times, self.exerciseBoundary(times),'k:',label='Ex. boundary')
+        plt.legend(framealpha=1,frameon=True)
 #######################################################################################################################
 ##Merton Model Implementations
 class Euro_Merton(Merton_Option):
@@ -1422,8 +1581,14 @@ class Euro_Merton(Merton_Option):
     payoff = EA_payoff #Set payoff method to European Call option payoff
     path = JD_path
     
-    def BS(self,n):
+    def BS(self,n=100):
         """
+        Approximate BS formula for European Call with MJD, truncate sum to n terms:
+        
+        Parameters:
+            n(int)=100 : number of terms to truncate infinite sum to
+        Returns:
+            c(float) : BS price for Euro Call under MJD
         """
         sig_n=np.sqrt(self.sig**2+(self.jumpstd**2)*np.arange(n)/self.T)
         r_n=self.r-self.lam*self.J_bar+np.arange(n)*np.log((1+self.J_bar)/self.T)
@@ -1431,7 +1596,8 @@ class Euro_Merton(Merton_Option):
         D2 = D1 - sig_n*np.sqrt(self.T)
         bs=self.X0*norm.cdf(D1)-self.K*np.exp(-r_n*self.T)*norm.cdf(D2)
         discount=np.exp(-self.lam*(1+self.J_bar)*self.T)
-        return discount*np.sum(((self.lam*(1+self.J_bar)*self.T)**np.arange(n)/factorial(np.arange(n)))*bs)
+        c = discount*np.sum(((self.lam*(1+self.J_bar)*self.T)**np.arange(n)/factorial(np.arange(n)))*bs)
+        return c
 
 class Asian_Merton(Merton_Option):
     """
@@ -1443,7 +1609,7 @@ class Asian_Merton(Merton_Option):
         __Inherited__
     """
     
-    payoff=EA_payoff #Set payoff method to Euro/Asian Call Option Payoff
+    payoff = EA_payoff #Set payoff method to Euro/Asian Call Option Payoff
     path = JD_path_avg
 
 class Lookback_Merton(Merton_Option):
@@ -1564,10 +1730,12 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6
     axis_list[0].plot(range(Lmax+1),np.log(V_p)/np.log(M),'k:',label='$P_{l}$',
                       marker=(8,2,0),markersize=markersize,markerfacecolor="None",markeredgecolor='k', markeredgewidth=1)
     axis_list[0].plot(range(1,Lmax+1),np.log(V_dp[1:])/np.log(M),'k-',label='$P_{l}-P_{l-1}$',
-                      marker=(8,2,0), markersize=markersize, markerfacecolor="None", markeredgecolor='k', markeredgewidth=1)
+                      marker=(8,2,0), markersize=markersize, markerfacecolor="None", markeredgecolor='k',
+                      markeredgewidth=1)
     #Plot means
     axis_list[1].plot(range(Lmax+1),np.log(means_p)/np.log(M),'k:',label='$P_{l}$',
-                      marker=(8,2,0), markersize=markersize, markerfacecolor="None",markeredgecolor='k', markeredgewidth=1)
+                      marker=(8,2,0), markersize=markersize, markerfacecolor="None",markeredgecolor='k',
+                      markeredgewidth=1)
     axis_list[1].plot(range(1,Lmax+1),np.log(means_dp[1:])/np.log(M),'k-',label='$P_{l}-P_{l-1}$',
                       marker=(8,2,0),markersize=markersize,markerfacecolor="None",markeredgecolor='k', markeredgewidth=1)
                       
@@ -1593,10 +1761,12 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6
 
         #Plot antithetic variances
         axis_list[0].plot(range(1,Lmax+1),np.log(V_dp[1:])/np.log(M),'k--',label='Antithetic $P_{l}-P_{l-1}$',
-                          marker=(8,2,0),markersize=markersize,markerfacecolor="None",markeredgecolor='k', markeredgewidth=1)
+                          marker=(8,2,0),markersize=markersize,markerfacecolor="None",markeredgecolor='k',
+                          markeredgewidth=1)
         #Plot antithetic means
         axis_list[1].plot(range(1,Lmax+1),np.log(means_dp[1:])/np.log(M),'k--',label='Antithetic $P_{l}-P_{l-1}$',
-                          marker=(8,2,0),markersize=markersize,markerfacecolor="None",markeredgecolor='k', markeredgewidth=1)
+                          marker=(8,2,0),markersize=markersize,markerfacecolor="None",markeredgecolor='k',
+                          markeredgewidth=1)
 
 
     #Label variance plot
