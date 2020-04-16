@@ -994,6 +994,8 @@ class Option:
                     sqrt_h=np.concatenate((sqrt_h,[np.sqrt(M**L)]),axis=0)
                     sums=np.concatenate((sums,np.zeros((7,1))),axis=1)
                     sums[:,L]+=self.looper(N0,L,M,anti)
+                    
+        print(f'Estimated alpha_0 = {alpha}')
         if warm_start:
             self.alpha_0=alpha #update with estimate of option alpha
             print(f'Saved estimated alpha_0 = {alpha}')
@@ -1647,7 +1649,7 @@ class Digital_Merton(Merton_Option):
 
 #######################################################################################################################
 ##Two plotting functions to plot Giles-style plots
-def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**4):
+def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6):
     """
     Plots variance/mean and cost/number of levels plots a la Giles 2008.
     
@@ -1681,7 +1683,7 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**4
     #Do the calculations and simulations for num levels and complexity plot
     for i in range(len(eps)):
         e=eps[i]
-        sums,N=option.mlmc(e,M)
+        sums,N=option.mlmc(e,M,warm_start=False)
         L=len(N)-1
         means_p=np.abs(sums[2,:]/N)
         V_p=(sums[3,:]/N)-means_p**2
@@ -1698,7 +1700,7 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**4
                        markerfacecolor="None",markeredgecolor='k', markeredgewidth=1)
         
         if anti==True:
-            sums,N=option.mlmc(e,M,anti)
+            sums,N=option.mlmc(e,M,anti,warm_start=False)
             L=len(N)-1
             
             #Note that cost is defined as calls to rng (i.e. number of fine steps) not number of sde evaluations
@@ -1730,8 +1732,8 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**4
     means_p=np.abs(sums[2,:]/N)
     V_p=(sums[3,:]/N)-means_p**2 
     means_dp=np.abs(sums[0,:]/N)
-    V_dp=(sums[1,:]/N)-means_dp**2
-
+    V_dp=(sums[1,:]/N)-means_dp**2  
+    
     #Plot variances
     axis_list[0].plot(range(Lmax+1),np.log(V_p)/np.log(M),'k:',label='$P_{l}$',
                       marker=(8,2,0),markersize=markersize,markerfacecolor="None",markeredgecolor='k', markeredgewidth=1)
@@ -1774,18 +1776,40 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**4
                           marker=(8,2,0),markersize=markersize,markerfacecolor="None",markeredgecolor='k',
                           markeredgewidth=1)
 
-
+    #Estimate orders of weak (alpha from means) and strong (beta from variance) convergence using LR
+    #Will use antithetic means/variances if anti==True
+    X=np.ones((Lmax,2))
+    X[:,0]=np.arange(1,Lmax+1)
+    a = np.linalg.lstsq(X,np.log(means_dp[1:]),rcond=None)[0]
+    alpha = max(0.5,-a[0]/np.log(M))
+    b = np.linalg.lstsq(X,np.log(V_dp[1:]),rcond=None)[0]
+    beta = max(0.5,-b[0]/np.log(M))  
+    
     #Label variance plot
     axis_list[0].set_xlabel('$l$')
     axis_list[0].set_ylabel(f'log$_{M}$(var)')
     axis_list[0].legend(framealpha=1, frameon=True)
     axis_list[0].xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    #Add estimated beta
+    if anti==True:
+        s='$\\beta_{anti}$ = %s' % round(beta,2)
+    else:
+        s='$\\beta$ = {}'.format(round(beta,2))
+    t = axis_list[0].annotate(s, (Lmax/2, np.log(V_dp[1])/np.log(M)),fontsize=markersize,
+            size=2*markersize, bbox=dict(ec='None',facecolor='None',lw=2))
     
     #Label means plot
     axis_list[1].set_xlabel('$l$')
     axis_list[1].set_ylabel(f'log$_{M}$(mean)')
     axis_list[1].legend(framealpha=1, frameon=True)
     axis_list[1].xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    #Add estimated alpha
+    if anti==True:
+        s='$\\alpha_{anti}$ = %s' % round(alpha,2)
+    else:
+        s='$\\alpha$ = {}'.format(round(alpha,2))
+    t = axis_list[1].annotate(s, (Lmax/2, np.log(means_dp[1])/np.log(M)), fontsize=markersize,
+            size=2*markersize, bbox=dict(ec='None',facecolor='None',lw=2))
     
     #Label number of levels plot
     axis_list[2].set_xlabel('$l$')
