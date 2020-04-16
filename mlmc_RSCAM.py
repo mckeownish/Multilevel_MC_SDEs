@@ -123,7 +123,7 @@ def Amer_payoff(self,N_loop,l,M):
         Pf,Pc (numpy.array) : payoff vectors for N_loop sample paths (Pc=0 if l==0)
     """
     K=self.K;T=self.T;r=self.r
-    Xf,Xc=self.path
+    Xf,Xc=self.path(N_loop,l,M)
     Pf = Xf[:,2] + Xf[:,1]*np.maximum(K-Xf[:,0],0)*np.exp(-r*T)
     if l == 0:
         return Pf,0 #ignore Pc
@@ -1107,7 +1107,8 @@ class Diffusion_Option(Option):
         """
         super().__init__(**kwargs)
         self.sig = sig
-        self.mu = lambda x,t: (self.r*x+drift(x,t)) # mu(S,t)=(r*S+drift(S,t))
+        r=self.r
+        self.mu = lambda x,t: r*x+drift(x,t) # mu(S,t)=(r*S+drift(S,t))
 
     def sde(self,X,dt,t_,dW):
         """ 
@@ -1299,7 +1300,8 @@ class GBM_Option(Option):
         """
         super().__init__(**kwargs)
         self.sig = sig
-        self.mu = (self.r+drift)
+        r=self.r
+        self.mu = (r+drift)
 
     def sde(self,X,dt,t_,dW):
         """ 
@@ -1439,17 +1441,16 @@ class Amer_GBM(GBM_Option):
     __________________
     
     Attributes:
-        exerciseBoundary(func) = None : exercise boundary function for option.If None, sets to default B(t)=(K-0.8*sqrt(T-t))+
+        exerciseBoundary(func<Option,float>) : exercise boundary function for option
         __Inherited__
     """
     payoff=Amer_payoff
 
-    def __init__(self,exerciseBoundary=None,**kwargs):
+    def __init__(self,exerciseBoundary,**kwargs):
         super().__init__(**kwargs)
-        if exerciseBoundary==None:
-            self.exerciseBoundary = lambda t: np.maximum(self.K-0.8*np.sqrt(self.T-t),0)
-            
-    def path(self,N,l,M):
+        self.exerciseBoundary = exerciseBoundary
+                 
+    def path(self,N_loop,l,M):
         """ 
         The path function for Euler-Maruyama GBM, which calculates path-wise values for American option pricing.
 
@@ -1495,14 +1496,14 @@ class Amer_GBM(GBM_Option):
             Xright = Xleft + sde(Xleft,dt,t_,dWf)
 
             # evaluate barrier on left end point
-            leftBarrier = exerciseBoundary(t_)
+            leftBarrier = exerciseBoundary(self,t_)
             tfMid = t_ + dt/2
 
             # evaluate barrier on right end point 
-            rightBarrier = exerciseBoundary(t_+dt)
+            rightBarrier = exerciseBoundary(self,j*dt)
 
             # evaluate barrier at mid point
-            midBarrier = exerciseBoundary(tfMid)
+            midBarrier = exerciseBoundary(self,tfMid)
 
             Prob1 = np.exp(-2 * np.maximum(Xleft - leftBarrier, 0) * np.maximum(Xright - rightBarrier,0) / ((sig**2)*dt*Xleft**2))
 
@@ -1518,7 +1519,7 @@ class Amer_GBM(GBM_Option):
                 halfdWc=dWc
 
             if j%M==0:
-                t_=(j-1)*M*dt
+                t_=(j-1-M)*dt
                 Xleft = Xc[:,0]
 
                 # advance path variable
@@ -1526,20 +1527,20 @@ class Amer_GBM(GBM_Option):
                 Xmid = Xleft + 0.5*(Xright-Xleft) + sig*Xleft*(halfdWc - 0.5*dWc)
 
                 # evaluate barrier at left end point
-                leftBarrier = exerciseBoundary(t_-M*dt)
+                leftBarrier = exerciseBoundary(self,t_)
 
                 tcMid = t_ + M*dt/2
 
                 # evaluate barrier at right end point
-                rightBarrier = exerciseBoundary(t_+M*dt)
-
+                rightBarrier = exerciseBoundary(self,j*dt)
+                
                 # evaluate barrier at mid point
-                midBarrier2 = exerciseBoundary(tcMid)
+                midBarrier2 = exerciseBoundary(self,tcMid)
 
                 # prob of hitting the barrier
                 midBarrier1 = np.exp(0.5*(np.log(rightBarrier)+np.log(leftBarrier)))
                 Prob11 = np.exp(-2*np.maximum(Xleft-leftBarrier,0) * np.maximum(Xmid-midBarrier1,0) /(dt*(sig**2)*(Xleft**2)))
-                Prob12 = np.exp(-2*np.maximum(Xmid-midBarrier1,0)* np.maximum(Xright-rightBarrier,0)/(dt*(sig**2)*(Xleft**2)))
+                Prob12 = np.exp(-2*np.maximum(Xmid-midBarrier1,0) * np.maximum(Xright-rightBarrier,0)/(dt*(sig**2)*(Xleft**2)))
 
                 Prob1 = (1.0-(1.0-Prob11)*(1.0-Prob12))
                 # update payoff
@@ -1548,8 +1549,13 @@ class Amer_GBM(GBM_Option):
                 Xc[:,1] *= (1-Prob1)
                 # update path variable
                 Xc[:,0] = Xright
+                
+                #Reset coarse Brownian increments
+                dWc=np.zeros(N_loop) #...Re-initialise coarse BI to 0
+
 
         return Xf,Xc
+    
     def asset_plot(self,L=6,M=2):
         """
         Plots underlying asset price for GBM with given sde function (EM) on a fine and coarse grid differing by factor
@@ -1564,8 +1570,8 @@ class Amer_GBM(GBM_Option):
         """
         super().asset_plot(L,M)
         dt=self.T/M**L
-        times=np.arange(self.T+dt,dt)
-        plt.plot(times, self.exerciseBoundary(times),'k:',label='Ex. boundary')
+        times=np.arange(0,self.T+dt,dt)
+        plt.plot(times, self.exerciseBoundary(self,times),'k:',label='Ex. boundary')
         plt.legend(framealpha=1,frameon=True)
 #######################################################################################################################
 ##Merton Model Implementations
@@ -1641,7 +1647,7 @@ class Digital_Merton(Merton_Option):
 
 #######################################################################################################################
 ##Two plotting functions to plot Giles-style plots
-def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6):
+def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**4):
     """
     Plots variance/mean and cost/number of levels plots a la Giles 2008.
     
@@ -1677,7 +1683,7 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6
         e=eps[i]
         sums,N=option.mlmc(e,M)
         L=len(N)-1
-        means_p=sums[2,:]/N
+        means_p=np.abs(sums[2,:]/N)
         V_p=(sums[3,:]/N)-means_p**2
         
         #Note that cost is defined as calls to rng (i.e. number of fine steps) not number of sde evaluations
@@ -1705,7 +1711,7 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6
             axis_list[2].semilogy(range(L+1),N,'k--',marker=markers[i],markersize=markersize,
                        markerfacecolor="None",markeredgecolor='k', markeredgewidth=1)
     
-    #Variance and complexity samples
+    #Variance and mean samples
     N = (Lmax+1)*[Nsamples]
     sums=np.zeros((4,Lmax+1))
     for l in range(Lmax+1):
@@ -1721,9 +1727,9 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6
             sumPcPf=np.sum(Pc*Pf)
             sums[:,l]+=np.array([np.sum(dP_l),np.sum(dP_l**2),sumPf,sumPf2])
     
-    means_p=sums[2,:]/N
+    means_p=np.abs(sums[2,:]/N)
     V_p=(sums[3,:]/N)-means_p**2 
-    means_dp=sums[0,:]/N
+    means_dp=np.abs(sums[0,:]/N)
     V_dp=(sums[1,:]/N)-means_dp**2
 
     #Plot variances
@@ -1754,9 +1760,9 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6
                 sumPcPf=np.sum(Pc*Pf)
                 sums[:,l]=np.array([np.sum(dP_l),np.sum(dP_l**2),sumPf,sumPf2])
 
-        means_p=sums[2,:]/N
+        means_p=np.abs(sums[2,:]/N)
         V_p=(sums[3,:]/N)-means_p**2 
-        means_dp=sums[0,:]/N
+        means_dp=np.abs(sums[0,:]/N)
         V_dp=(sums[1,:]/N)-means_dp**2
 
         #Plot antithetic variances
