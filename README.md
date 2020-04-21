@@ -22,12 +22,4 @@ Classes: Option, JumpDiffusion_Option, Diffusion_Option, Merton_Option, GBM_Opti
 With specific Euro_GBM/Euro_Merton, Lookback_GBM/Lookback_Merton, Asian_GBM/Asian_Merton, 
 Digital_GBM/Digital_Merton implementations for Merton and GBM models. 
 Use inspect.getmembers(mlmc_RSCAM,inspect.isclass) to get full list.
-
-Example usage:
-import mlmc_RSCAM as mlmc
-opt = mlmc.Euro_GBM(X0=125)
-sums,N=opt.mlmc(eps=0.01)
-print(sum(sums[0,:]/N),opt.BS()) #Compare BS price with mlmc-calculated price
-mlmc.variance_plot(opt,eps=0.01,label='European GBM ') #Plot mean/variance plot
-opt.asset_plot(L=4,M=4) #Plot asset price on two discretisation levels
 ```
