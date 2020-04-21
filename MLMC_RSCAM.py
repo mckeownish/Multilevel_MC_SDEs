@@ -1,5 +1,7 @@
 """
+MLMC_RSCAM
 Multilevel Monte Carlo Implementation for RSCAM Group 1
+Luke Shaw, Olena Balan, Isabell Linde, Chantal Kool, Josh Mckeown
 _______________________________________________________
 Functions: Euro_payoff, Asian_payoff, Lookback_payoff, Digital_payoff, and anti_Euro_payoff payoffs.
 (diffusion/JD)_path(_min/_avg) for diffusion and jump diffusion, coarse/fine final, avg, min asset prices.
@@ -30,7 +32,26 @@ from scipy.stats import norm
 import matplotlib.ticker as ticker
 from scipy.special import factorial
 from matplotlib.legend import Legend
+import weakref
 
+class WeakMethod:
+    """
+    Taken from:
+    https://stackoverflow.com/questions/55413060/python-passing-functions-as-arguments-to-initialize-the-methods-of-an-object-p
+    """
+    def __init__(self, func, instance):
+        self.func = func
+        self.instance_ref = weakref.ref(instance)
+
+        self.__wrapped__ = func  # this makes things like `inspect.signature` work
+
+    def __call__(self, *args, **kwargs):
+        instance = self.instance_ref()
+        return self.func(instance, *args, **kwargs)
+
+    def __repr__(self):
+        cls_name = type(self).__name__
+        return '{}({!r}, {!r})'.format(cls_name, self.func, self.instance_ref())
 #######################################################################################################################
 ##General Payoff Funcs
 def EA_payoff(self,N_loop,l,M):
@@ -944,9 +965,9 @@ class Option:
             option(Option) : Option instance (with SDE params and order of weak convergence of method alpha_0)
             eps(float) : desired accuracy
             M(int) = 2 : coarseness factor
-            anti(bool)=False : whether to use antithetic estimator
+            anti(bool) = False : whether to use antithetic estimator
             N0(int) = 10**3 : default number of samples to use when initialising new level
-            warm_start(bool)=True: whether to save calculated alpha as alpha_0 for future function calls
+            warm_start(bool) = True: whether to save calculated alpha as alpha_0 for future function calls
 
         Returns: sums=[np.sum(dP_l),np.sum(dP_l**2),sumPf,sumPf2,sumPc,sumPc2,sum(Pf*Pc)],N
             sums(np.array) : sums of payoff diffs at each level and sum of payoffs at fine level, each column is a level
@@ -960,7 +981,7 @@ class Option:
         N=np.zeros(L+1) #Initialise num. samples vector of each levels' num. samples
         dN=N0*np.ones(L+1) #Initialise additional samples for this iteration vector for each level
         sums=np.zeros((7,L+1)) #Initialise sums array, each column is a level
-        sqrt_h=np.sqrt(M**(np.arange(L+1)))
+        sqrt_h=np.sqrt(M**(np.arange(0,L+1)))
 
         while (np.sum(dN)>0): #Loop until no additional samples asked for
             for l in range(L+1):
@@ -989,16 +1010,15 @@ class Option:
                     L+=1
                     #Add extra entries for the new level and estimate sums with N0 samples 
                     V=np.concatenate((V,np.zeros(1)), axis=0)
-                    N=np.concatenate((N,N0*np.ones(1)),axis=0)
+                    N=np.concatenate((N,N0*np.zeros(1)),axis=0)
                     dN=np.concatenate((dN,N0*np.ones(1)),axis=0)
                     sqrt_h=np.concatenate((sqrt_h,[np.sqrt(M**L)]),axis=0)
                     sums=np.concatenate((sums,np.zeros((7,1))),axis=1)
-                    sums[:,L]+=self.looper(N0,L,M,anti)
                     
-        print(f'Estimated alpha_0 = {alpha}')
+        print(f'Estimated alpha = {alpha}')
         if warm_start:
             self.alpha_0=alpha #update with estimate of option alpha
-            print(f'Saved estimated alpha_0 = {alpha}')
+            print(f'    Saved estimated alpha_0 = {alpha}')
         return sums,N
 
 class JumpDiffusion_Option(Option):
@@ -1045,8 +1065,8 @@ class JumpDiffusion_Option(Option):
                     T (float) : Time to maturity for option
         """
         super().__init__(**kwargs)
-        self.path=path
-        self.payoff=payoff
+        self.path=WeakMethod(path,self)
+        self.payoff=WeakMethod(payoff,self)
         self.lam=lam
         if J_bar==None:
             if jumpsize!=np.random.standard_normal:
@@ -1108,9 +1128,10 @@ class Diffusion_Option(Option):
                 T (float) : Time to maturity for option
         """
         super().__init__(**kwargs)
+        self.path=WeakMethod(path,self)
+        self.payoff=WeakMethod(payoff,self)
         self.sig = sig
-        r=self.r
-        self.mu = lambda x,t: r*x+drift(x,t) # mu(S,t)=(r*S+drift(S,t))
+        self.mu = lambda x,t: self.r*x+drift(x,t) # mu(S,t)=(r*S+drift(S,t))
 
     def sde(self,X,dt,t_,dW):
         """ 
@@ -1198,9 +1219,9 @@ class MyOption(Option):
         super().__init__()
         for k,v in kwargs.items():
             setattr(self, k, v)
-        self.sde=sde
-        self.path=path
-        self.payoff=payoff
+        self.sde=WeakMethod(sde,self)
+        self.path=WeakMethod(path,self)
+        self.payoff=WeakMethod(payoff,self)
         
 #######################################################################################################################
 #Specific option implementations
@@ -1223,7 +1244,7 @@ class Merton_Option(Option):
         jumpmean(float) : mean of lognormal jumpsize s.t. log(dJ)~N(jumpmean,jumpstd**2)
         jumpstd(float) : std of lognormal jumpsize s.t. log(dJ)~N(jumpmean,jumpstd**2)
         J_bar(float) : E[exp(jumpsize)-1] Expected value of dJ
-        sig(float) : volatility of asset as function of asset price x, time t; scales dW
+        sig(float) : volatility of asset as function; scales X*dW
         __Inherited__
     """ 
     
@@ -1392,6 +1413,7 @@ class Lookback_GBM(GBM_Option):
     __________________
     
     Attributes:
+        beta(float) = 0.5826 : Special factor for offset correction
         __Inherited__
     """
     payoff=Lookback_payoff #Set payoff method to Lookback call payoff
@@ -1447,11 +1469,22 @@ class Amer_GBM(GBM_Option):
         __Inherited__
     """
     payoff=Amer_payoff
-
     def __init__(self,exerciseBoundary,**kwargs):
         super().__init__(**kwargs)
         self.exerciseBoundary = exerciseBoundary
-                 
+
+    def exerciseBoundary(self,t):
+        """ 
+        The exercise boundary function for parent American Option.
+
+        Parameters:
+            self(Option): option that function is called through
+            t(float) : time at which exercise boundary function evaluated
+        Returns:
+            b (float) : value of exercise boundary at time t
+        """
+        raise NotImplementedError("American Option instance has no implemented exerciseBoundary method") 
+    
     def path(self,N_loop,l,M):
         """ 
         The path function for Euler-Maruyama GBM, which calculates path-wise values for American option pricing.
@@ -1521,7 +1554,7 @@ class Amer_GBM(GBM_Option):
                 halfdWc=dWc
 
             if j%M==0:
-                t_=(j-1-M)*dt
+                t_=(j-M)*dt
                 Xleft = Xc[:,0]
 
                 # advance path variable
@@ -1540,7 +1573,7 @@ class Amer_GBM(GBM_Option):
                 midBarrier2 = exerciseBoundary(self,tcMid)
 
                 # prob of hitting the barrier
-                midBarrier1 = np.exp(0.5*(np.log(rightBarrier)+np.log(leftBarrier)))
+                midBarrier1 = 0.5*(rightBarrier+leftBarrier)
                 Prob11 = np.exp(-2*np.maximum(Xleft-leftBarrier,0) * np.maximum(Xmid-midBarrier1,0) /(dt*(sig**2)*(Xleft**2)))
                 Prob12 = np.exp(-2*np.maximum(Xmid-midBarrier1,0) * np.maximum(Xright-rightBarrier,0)/(dt*(sig**2)*(Xleft**2)))
 
@@ -1575,6 +1608,7 @@ class Amer_GBM(GBM_Option):
         times=np.arange(0,self.T+dt,dt)
         plt.plot(times, self.exerciseBoundary(self,times),'k:',label='Ex. boundary')
         plt.legend(framealpha=1,frameon=True)
+        
 #######################################################################################################################
 ##Merton Model Implementations
 class Euro_Merton(Merton_Option):
@@ -1598,13 +1632,13 @@ class Euro_Merton(Merton_Option):
         Returns:
             c(float) : BS price for Euro Call under MJD
         """
-        sig_n=np.sqrt(self.sig**2+(self.jumpstd**2)*np.arange(n)/self.T)
-        r_n=self.r-self.lam*self.J_bar+np.arange(n)*np.log((1+self.J_bar)/self.T)
+        sig_n=np.sqrt(self.sig**2+(self.jumpstd**2)*np.arange(0,n)/self.T)
+        r_n=self.r-self.lam*self.J_bar+np.arange(0,n)*np.log((1+self.J_bar)/self.T)
         D1 =(np.log(self.X0/self.K)+(r_n+0.5*sig_n**2)*self.T)/(sig_n*np.sqrt(self.T))
         D2 = D1 - sig_n*np.sqrt(self.T)
         bs=self.X0*norm.cdf(D1)-self.K*np.exp(-r_n*self.T)*norm.cdf(D2)
         discount=np.exp(-self.lam*(1+self.J_bar)*self.T)
-        c = discount*np.sum(((self.lam*(1+self.J_bar)*self.T)**np.arange(n)/factorial(np.arange(n)))*bs)
+        c = discount*np.sum(((self.lam*(1+self.J_bar)*self.T)**np.arange(0,n)/factorial(np.arange(0,n)))*bs)
         return c
 
 class Asian_Merton(Merton_Option):
@@ -1649,7 +1683,7 @@ class Digital_Merton(Merton_Option):
 
 #######################################################################################################################
 ##Two plotting functions to plot Giles-style plots
-def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6):
+def Giles_plot(option,eps,markers,label,fig,M=2,N0=10**3,anti=False,Lmax=8,Nsamples=10**6):
     """
     Plots variance/mean and cost/number of levels plots a la Giles 2008.
     
@@ -1663,9 +1697,10 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6
         label(str) : plot title
         fig : figure to plot onto
         M(int) = 2 : coarseness factor
+        N0(int) = 10**3 : min samples per level
         anti(bool) = False : whether to use antithetic estimator
-        Lmax(int)=8 : max level to estimate variance/mean of P_l-P_l-1
-        Nsamples(int)=10**6 : number of samples to use to estimate variance/mean
+        Lmax(int) = 8 : max level to estimate variance/mean of P_l-P_l-1
+        Nsamples(int) = 10**6 : number of samples to use to estimate variance/mean
     """
     #Set plotting params
     markersize=3*(fig.get_size_inches()[0])/4
@@ -1683,56 +1718,45 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6
     #Do the calculations and simulations for num levels and complexity plot
     for i in range(len(eps)):
         e=eps[i]
-        sums,N=option.mlmc(e,M,warm_start=False)
+        sums,N=option.mlmc(e,M,warm_start=False,N0=N0)
         L=len(N)-1
         means_p=np.abs(sums[2,:]/N)
         V_p=(sums[3,:]/N)-means_p**2
         
         #Note that cost is defined as calls to rng (i.e. number of fine steps) not number of sde evaluations
-        if hasattr(option,'lam'): #If Merton option, have to add extra cost due to jumps
+        if hasattr(option,'lam'): #If jump diffusion option, have to add extra cost due to jumps
             cost_mlmc+=[(np.sum(N)*option.lam
-                             +np.sum(N*(M**np.arange(L+1))))*e**2]
+                             +np.sum(N*(M**np.arange(0,L+1))))*e**2]
         else:
-            cost_mlmc+=[np.sum(N*(M**np.arange(L+1)))*e**2]
+            cost_mlmc+=[np.sum(N*(M**np.arange(0,L+1)))*e**2]
 
-        cost_mc+=[2*np.sum(V_p*M**np.arange(L+1))]
+        cost_mc+=[2*V_p[-1]*(M**L)]
         axis_list[2].semilogy(range(L+1),N,'k-',marker=markers[i],label=f'{e}',markersize=markersize,
                        markerfacecolor="None",markeredgecolor='k', markeredgewidth=1)
         
         if anti==True:
-            sums,N=option.mlmc(e,M,anti,warm_start=False)
+            sums,N=option.mlmc(e,M,anti=anti,warm_start=False,N0=N0)
             L=len(N)-1
             
             #Note that cost is defined as calls to rng (i.e. number of fine steps) not number of sde evaluations
             if hasattr(option,'lam'): #If jump diffusion option, have to add extra cost due to jumps
                 cost_anti+=[(np.sum(N)*option.lam
-                             +np.sum(N*(M**np.arange(L+1))))*e**2]
+                             +np.sum(N*(M**np.arange(0,L+1))))*e**2]
             else:
-                cost_anti+=[np.sum(N*(M**np.arange(L+1)))*e**2]
+                cost_anti+=[np.sum(N*(M**np.arange(0,L+1)))*e**2]
                 
             axis_list[2].semilogy(range(L+1),N,'k--',marker=markers[i],markersize=markersize,
                        markerfacecolor="None",markeredgecolor='k', markeredgewidth=1)
     
     #Variance and mean samples
-    N = (Lmax+1)*[Nsamples]
     sums=np.zeros((4,Lmax+1))
     for l in range(Lmax+1):
-        Pf,Pc = option.payoff(Nsamples,l,M)
-        sumPf=np.sum(Pf)
-        sumPf2=np.sum(Pf**2)
-        if l==0:
-            sums[:,l]+=np.array([sumPf,sumPf2,sumPf,sumPf2])
-        else:
-            dP_l=Pf-Pc #Payoff difference
-            sumPc=np.sum(Pc)
-            sumPc2=np.sum(Pc**2)
-            sumPcPf=np.sum(Pc*Pf)
-            sums[:,l]+=np.array([np.sum(dP_l),np.sum(dP_l**2),sumPf,sumPf2])
+        sums[:,l] = option.looper(Nsamples,l,M,anti=False)[:4]
     
-    means_p=np.abs(sums[2,:]/N)
-    V_p=(sums[3,:]/N)-means_p**2 
-    means_dp=np.abs(sums[0,:]/N)
-    V_dp=(sums[1,:]/N)-means_dp**2  
+    means_p=np.abs(sums[2,:]/Nsamples)
+    V_p=(sums[3,:]/Nsamples)-means_p**2 
+    means_dp=np.abs(sums[0,:]/Nsamples)
+    V_dp=(sums[1,:]/Nsamples)-means_dp**2  
     
     #Plot variances
     axis_list[0].plot(range(Lmax+1),np.log(V_p)/np.log(M),'k:',label='$P_{l}$',
@@ -1750,22 +1774,12 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6
     #Plot antithetic means and variance if necessary
     if anti==True:
         for l in range(Lmax+1):
-            Pf,Pc = option.anti_payoff(Nsamples,l,M)
-            sumPf=np.sum(Pf)
-            sumPf2=np.sum(Pf**2)
-            if l==0:
-                sums[:,l]=np.array([sumPf,sumPf2,sumPf,sumPf2])
-            else:
-                dP_l=Pf-Pc #Payoff difference
-                sumPc=np.sum(Pc)
-                sumPc2=np.sum(Pc**2)
-                sumPcPf=np.sum(Pc*Pf)
-                sums[:,l]=np.array([np.sum(dP_l),np.sum(dP_l**2),sumPf,sumPf2])
+            sums[:,l] = option.looper(Nsamples,l,M,anti=True)[:4]
 
-        means_p=np.abs(sums[2,:]/N)
-        V_p=(sums[3,:]/N)-means_p**2 
-        means_dp=np.abs(sums[0,:]/N)
-        V_dp=(sums[1,:]/N)-means_dp**2
+        means_p=np.abs(sums[2,:]/Nsamples)
+        V_p=(sums[3,:]/Nsamples)-means_p**2 
+        means_dp=np.abs(sums[0,:]/Nsamples)
+        V_dp=(sums[1,:]/Nsamples)-means_dp**2
 
         #Plot antithetic variances
         axis_list[0].plot(range(1,Lmax+1),np.log(V_dp[1:])/np.log(M),'k--',label='Antithetic $P_{l}-P_{l-1}$',
@@ -1781,9 +1795,9 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6
     X=np.ones((Lmax,2))
     X[:,0]=np.arange(1,Lmax+1)
     a = np.linalg.lstsq(X,np.log(means_dp[1:]),rcond=None)[0]
-    alpha = max(0.5,-a[0]/np.log(M))
+    alpha = -a[0]/np.log(M)
     b = np.linalg.lstsq(X,np.log(V_dp[1:]),rcond=None)[0]
-    beta = max(0.5,-b[0]/np.log(M))  
+    beta = -b[0]/np.log(M) 
     
     #Label variance plot
     axis_list[0].set_xlabel('$l$')
@@ -1847,6 +1861,7 @@ def Giles_plot(option,eps,markers,label,fig,M=2,anti=False,Lmax=8,Nsamples=10**6
     axis_list[3].set_ylabel('$\epsilon^{2}$cost')
     axis_list[3].legend(frameon=True,framealpha=1)
     
+    #Add title and space out subplots
     fig.suptitle(label+f'\n$S(0)=K={option.X0}, M={M}$')
     fig.tight_layout(rect=[0, 0.03, 1, 0.94],h_pad=2,w_pad=4,pad=4)
 
@@ -1864,7 +1879,7 @@ def brownian_plot(L=8,M=2):
     dWf=np.random.randn(Nsteps)*np.sqrt(dt) #Brownian motion for adaptive time step
     for l in range(L-1,-1,-1):
         dt=2*dt
-        r=np.arange(M)
+        r=np.arange(0,M)
         dWc=np.zeros(M**l)
         for el in r:
             dWc+=dWf[el::M]
