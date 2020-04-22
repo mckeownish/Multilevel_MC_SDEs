@@ -15,14 +15,18 @@ With specific Euro_GBM/Euro_Merton, Lookback_GBM/Lookback_Merton, Asian_GBM/Asia
 Digital_GBM/Digital_Merton implementations for Merton and GBM models. 
 Use inspect.getmembers(mlmc_RSCAM,inspect.isclass) to get full list.
 
-
+________________________________________________________
 Example usage:
-import mlmc_RSCAM as mlmc
+import MLMC_RSCAM as multi
 
-opt = mlmc.Euro_GBM(X0=125)
+opt = multi.Euro_GBM(X0=125,K=105,r=0.02,sig=0.5)
 sums,N=opt.mlmc(eps=0.01)
 print(sum(sums[0,:]/N),opt.BS()) #Compare BS price with mlmc-calculated price
-mlmc.variance_plot(opt,eps=0.01,label='European GBM ') #Plot mean/variance plot
+
+eps=[0.005,0.1,0.2,0.25,0.3]
+fig,ax=plt.subplots(2,2,figsize=(30,30))
+markers=['o','s','x','d']
+multi.Giles_plot(opt,eps,label='European GBM ', markers=markers,fig=fig,Nsamples=10**3) #Plot mean/variance/numbr of levels/complexity plot
 opt.asset_plot(L=4,M=4) #Plot asset price on two discretisation levels
 """
 
@@ -38,6 +42,7 @@ class WeakMethod:
     """
     Taken from:
     https://stackoverflow.com/questions/55413060/python-passing-functions-as-arguments-to-initialize-the-methods-of-an-object-p
+    Need to use for passing functions with self as argument in constructor.
     """
     def __init__(self, func, instance):
         self.func = func
@@ -679,14 +684,14 @@ def diffusion_asset_plot(self,L=6,M=2):
             dWc=0 #...Re-initialise coarse BI to 0
 
     ##Plot and label
-    tf=np.arange(0,T+dt,dt) #Fine time grid
-    tc=np.arange(0,T+M*dt,M*dt) #Coarse time grid
+    tf=np.linspace(0,T,Nsteps+1) #Fine time grid
+    tc=np.linspace(0,T,M**(L-1)+1) #Coarse time grid
     plt.plot(tf,Xf,'k-',label='Fine')
     plt.plot(tc,Xc,'k--',label='Coarse')
     label=' '.join(str(type(self).__name__).split('_'))    
     plt.legend(framealpha=1,frameon=True)
     plt.title(label+f' Underlying Asset Price, $M={M}, L={L}$')
-    plt.xlabel('$T$')
+    plt.xlabel('$t$')
     plt.ylabel('Asset Price')
 
 def JD_asset_plot(self,L=6,M=2):
@@ -764,8 +769,8 @@ def JD_asset_plot(self,L=6,M=2):
     plt.plot(times_c,Xc,'k--',label='Coarse')
     plt.legend(framealpha=1, frameon=True)
     label=' '.join(str(type(self).__name__).split('_'))
-    plt.title(label+f'Underlying Asset Price, $M={M}, L={L}$')
-    plt.xlabel('$T$')
+    plt.title(label+f' Underlying Asset Price, $M={M}, L={L}$')
+    plt.xlabel('$t$')
     plt.ylabel('Asset Price')
     
 #######################################################################################################################
@@ -798,8 +803,6 @@ class Option:
             K (float) : Strike price (overridden and set to None for Lookback options)
             T (float) : Time to maturity for option 
         """
-        if X0!=K:
-            raise ValueError('Attempting to instantiate a non At-the-Money strike: X0 is not equal to K')
         self.alpha_0=alpha_0
         self.X0=X0
         self.r = r
@@ -884,18 +887,17 @@ class Option:
          """
         raise NotImplementedError("Option instance has no implemented sde method")
     
-    def BS(self,n): #Depends on whether BS formula exists for option
+    def BS(self): #Depends on whether BS formula exists for option
         """ 
         The analytic Black-Scholes formula for the given Option instance, if it exists.
         No default. Should be implemented for any specific Option inheritors. 
   
         Parameters:
             self(Option): option that function is called through
-            n(int) : for certain options, the number of terms to tak in the approximate expansion
         Returns:
             c (float) : analytic option price
          """
-        raise NotImplementedError("Option instance has no implemented sde method")
+        raise NotImplementedError("Option instance has no implemented BS method")
     
     def asset_plot(self,L=6,M=2):
         """
@@ -962,7 +964,7 @@ class Option:
         ________________
         
         Parameters:
-            option(Option) : Option instance (with SDE params and order of weak convergence of method alpha_0)
+            self(Option) : Option instance (with SDE params and order of weak convergence of method alpha_0)
             eps(float) : desired accuracy
             M(int) = 2 : coarseness factor
             anti(bool) = False : whether to use antithetic estimator
@@ -1391,8 +1393,11 @@ class Asian_GBM(GBM_Option):
     def BS(self):
         """
         Black scholes formula for Asian Call with GBM.
-        Formula from: http://homepage.ntu.edu.tw/~jryanwang/course/Financial%20Computation%20or%20Financial%20Engineering%20(graduate%20level)/FE_Ch10%20Asian%20Options.pdf
-        
+        Formula from: 
+        Turnbull and Wakeman (1991), “A Quick Algorithm for Pricing European Average Option,” Journal of 
+        Financial and Quantitative Analysis 26, pp. 377–389.
+        See also: http://homepage.ntu.edu.tw/~jryanwang/course/Financial%20Computation%20or%20Financial%20Engineering%20(graduate%20level)/FE_Ch10%20Asian%20Options.pdf
+
         Returns:
             c(float) : Black-Scholes option price for given Asian option instance
         """
@@ -1604,8 +1609,7 @@ class Amer_GBM(GBM_Option):
             M(int) : coarseness factor s.t number of fine steps = M**L
         """
         super().asset_plot(L,M)
-        dt=self.T/M**L
-        times=np.arange(0,self.T+dt,dt)
+        times=np.linspace(0,self.T)
         plt.plot(times, self.exerciseBoundary(self,times),'k:',label='Ex. boundary')
         plt.legend(framealpha=1,frameon=True)
         
@@ -1782,11 +1786,11 @@ def Giles_plot(option,eps,markers,label,fig,M=2,N0=10**3,anti=False,Lmax=8,Nsamp
         V_dp=(sums[1,:]/Nsamples)-means_dp**2
 
         #Plot antithetic variances
-        axis_list[0].plot(range(1,Lmax+1),np.log(V_dp[1:])/np.log(M),'k--',label='Antithetic $P_{l}-P_{l-1}$',
+        axis_list[0].plot(range(1,Lmax+1),np.log(V_dp[1:])/np.log(M),'k--',label='Anti $P_{l}-P_{l-1}$',
                           marker=(8,2,0),markersize=markersize,markerfacecolor="None",markeredgecolor='k',
                           markeredgewidth=1)
         #Plot antithetic means
-        axis_list[1].plot(range(1,Lmax+1),np.log(means_dp[1:])/np.log(M),'k--',label='Antithetic $P_{l}-P_{l-1}$',
+        axis_list[1].plot(range(1,Lmax+1),np.log(means_dp[1:])/np.log(M),'k--',label='Anti $P_{l}-P_{l-1}$',
                           marker=(8,2,0),markersize=markersize,markerfacecolor="None",markeredgecolor='k',
                           markeredgewidth=1)
 
@@ -1835,9 +1839,9 @@ def Giles_plot(option,eps,markers,label,fig,M=2,N0=10**3,anti=False,Lmax=8,Nsamp
     if anti==True:
         #Add to indicate antithetic
         ncol=2
-        labels+=['Std. MLMC','Antithetic MLMC']
+        labels+=['Std. MLMC','Anti MLMC']
         lines += [plt.Line2D([], [], linestyle='-',color='k',label='Std. MLMC'),
-                    plt.Line2D([], [], linestyle='--',color='k', label='Antithetic MLMC')]
+                    plt.Line2D([], [], linestyle='--',color='k', label='Anti MLMC')]
         for i in range(len(eps)-2):
             lines.append(plt.Line2D([],[], alpha=0))
             labels.append('')
@@ -1856,7 +1860,7 @@ def Giles_plot(option,eps,markers,label,fig,M=2,N0=10**3,anti=False,Lmax=8,Nsamp
     if anti==True:
         #Plot antithetic complexity
         axis_list[3].loglog(eps,cost_anti,'k--',marker=(8,2,0),markersize=markersize,
-                 markerfacecolor="None",markeredgecolor='k', markeredgewidth=1,label='Antithetic MLMC')
+                 markerfacecolor="None",markeredgecolor='k', markeredgewidth=1,label='Anti MLMC')
     axis_list[3].set_xlabel('$\epsilon$')
     axis_list[3].set_ylabel('$\epsilon^{2}$cost')
     axis_list[3].legend(frameon=True,framealpha=1)
