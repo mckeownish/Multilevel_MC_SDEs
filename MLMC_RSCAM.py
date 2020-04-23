@@ -1707,7 +1707,7 @@ def Giles_plot(option,eps,markers,label,fig,M=2,N0=10**3,anti=False,Lmax=8,Nsamp
         Nsamples(int) = 10**6 : number of samples to use to estimate variance/mean
     """
     #Set plotting params
-    markersize=3*(fig.get_size_inches()[0])/4
+    markersize=(fig.get_size_inches()[0])
     if len(eps)!=len(markers):
         raise ValueError("Length of markers argument must be same as length of epsilon argument.")
     axis_list=fig.axes
@@ -1731,10 +1731,11 @@ def Giles_plot(option,eps,markers,label,fig,M=2,N0=10**3,anti=False,Lmax=8,Nsamp
         if hasattr(option,'lam'): #If jump diffusion option, have to add extra cost due to jumps
             cost_mlmc+=[(np.sum(N)*option.lam
                              +np.sum(N*(M**np.arange(0,L+1))))*e**2]
+            cost_mc+=[2*np.sum(V_p*(M**np.arange(L+1)+option.lam))]
         else:
             cost_mlmc+=[np.sum(N*(M**np.arange(0,L+1)))*e**2]
-
-        cost_mc+=[2*V_p[-1]*(M**L)]
+            cost_mc+=[2*np.sum(V_p*(M**np.arange(L+1)))]
+        
         axis_list[2].semilogy(range(L+1),N,'k-',marker=markers[i],label=f'{e}',markersize=markersize,
                        markerfacecolor="None",markeredgecolor='k', markeredgewidth=1)
         
@@ -1806,27 +1807,27 @@ def Giles_plot(option,eps,markers,label,fig,M=2,N0=10**3,anti=False,Lmax=8,Nsamp
     #Label variance plot
     axis_list[0].set_xlabel('$l$')
     axis_list[0].set_ylabel(f'log$_{M}$(var)')
-    axis_list[0].legend(framealpha=1, frameon=True)
+    axis_list[0].legend(framealpha=0.6, frameon=True)
     axis_list[0].xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
     #Add estimated beta
     if anti==True:
         s='$\\beta_{anti}$ = %s' % round(beta,2)
     else:
         s='$\\beta$ = {}'.format(round(beta,2))
-    t = axis_list[0].annotate(s, (Lmax/2, np.log(V_dp[1])/np.log(M)),fontsize=markersize,
+    t = axis_list[0].annotate(s, (Lmax/2, np.log(V_dp[2])/np.log(M)),fontsize=markersize,
             size=2*markersize, bbox=dict(ec='None',facecolor='None',lw=2))
     
     #Label means plot
     axis_list[1].set_xlabel('$l$')
     axis_list[1].set_ylabel(f'log$_{M}$(mean)')
-    axis_list[1].legend(framealpha=1, frameon=True)
+    axis_list[1].legend(framealpha=0.6, frameon=True)
     axis_list[1].xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
     #Add estimated alpha
     if anti==True:
         s='$\\alpha_{anti}$ = %s' % round(alpha,2)
     else:
         s='$\\alpha$ = {}'.format(round(alpha,2))
-    t = axis_list[1].annotate(s, (Lmax/2, np.log(means_dp[1])/np.log(M)), fontsize=markersize,
+    t = axis_list[1].annotate(s, (Lmax/2, np.log(means_dp[3])/np.log(M)), fontsize=markersize,
             size=2*markersize, bbox=dict(ec='None',facecolor='None',lw=2))
     
     #Label number of levels plot
@@ -1839,16 +1840,18 @@ def Giles_plot(option,eps,markers,label,fig,M=2,N0=10**3,anti=False,Lmax=8,Nsamp
     if anti==True:
         #Add to indicate antithetic
         ncol=2
-        labels+=['Std. MLMC','Anti MLMC']
-        lines += [plt.Line2D([], [], linestyle='-',color='k',label='Std. MLMC'),
+        newlabels = ['Std. MLMC','Anti MLMC']
+        newlines = [plt.Line2D([], [], linestyle='-',color='k',label='Std. MLMC'),
                     plt.Line2D([], [], linestyle='--',color='k', label='Anti MLMC')]
         for i in range(len(eps)-2):
-            lines.append(plt.Line2D([],[], alpha=0))
-            labels.append('')
-
+            newlines.append(plt.Line2D([],[], alpha=0))
+            newlabels.append('')
+        lines=newlines+lines
+        labels=newlabels+labels
+       
     leg = Legend(axis_list[2], lines, labels, ncol=ncol, title='Accuracy $\epsilon$',
-                 frameon=True, framealpha=1)
-    leg._legend_box.align = "left"
+                 frameon=True, framealpha=0.6)
+    leg._legend_box.align = "right"
     axis_list[2].add_artist(leg)
         
     
@@ -1863,11 +1866,12 @@ def Giles_plot(option,eps,markers,label,fig,M=2,N0=10**3,anti=False,Lmax=8,Nsamp
                  markerfacecolor="None",markeredgecolor='k', markeredgewidth=1,label='Anti MLMC')
     axis_list[3].set_xlabel('$\epsilon$')
     axis_list[3].set_ylabel('$\epsilon^{2}$cost')
-    axis_list[3].legend(frameon=True,framealpha=1)
+    axis_list[3].legend(frameon=True,framealpha=0.6)
     
     #Add title and space out subplots
     fig.suptitle(label+f'\n$S(0)=K={option.X0}, M={M}$')
-    fig.tight_layout(rect=[0, 0.03, 1, 0.94],h_pad=2,w_pad=4,pad=4)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.94],h_pad=1,w_pad=1,pad=1)
+
 
 ##Shows same Brownian path over range of discretisations
 def brownian_plot(L=8,M=2):
