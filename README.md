@@ -1,6 +1,6 @@
 # Multilevel_MC_SDEs
 RSCAM Group 1 Project (Multilevel Monte Carlo for SDEs)<br/>
-OOP `python` module for option pricing using MLMC for University of Edinburgh MSc course, Research Skills in Computational Applied Maths. Implements and extends code from Mike Giles' software project [1].
+OOP `python` module for option pricing using MLMC for University of Edinburgh MSc course, Research Skills in Computational Applied Maths. Implements and extends code from Mike Giles' software project [1]. See `ExampleUsages.ipynb` Jupyter notebook for demonstrations of the code functionality.
 
 [1] M.B. Giles et. al. Multilevel Monte Carlo software, http://people.maths.ox.ac.uk/gilesm/mlmc/mlmc_software.html.
 
