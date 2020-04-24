@@ -780,6 +780,7 @@ class Option:
     
     Attributes:
         alpha_0 (float) : weak order of convergence of option sde
+        beta_0 (float) : order of convergence of variance of P_l-P_l-1
         X0 (float) : Initial underlying asset price X(0) 
         r (float) : risk-free interest rate
         K (float) : Strike price (overridden and set to None for Lookback options)
@@ -792,18 +793,20 @@ class Option:
         looper : Interfaces with mlmc function to implement loop over Nl samples and generate payoff sums
 
     """
-    def __init__(self,alpha_0=None,X0=100,K=100,T=1,r=0.05):
+    def __init__(self,alpha_0=None,beta_0=None,X0=100,K=100,T=1,r=0.05):
         """ 
         The Constructor for Option class. 
   
         Parameters: 
             alpha_0 (float) : weak order of convergence of option sde
+            beta_0 (float) : order of convergence of variance of P_l-P_l-1
             X0 (float) : Initial underlying asset price X(0) 
             r (float) : risk-free interest rate
             K (float) : Strike price (overridden and set to None for Lookback options)
             T (float) : Time to maturity for option 
         """
         self.alpha_0=alpha_0
+        self.beta_0=beta_0
         self.X0=X0
         self.r = r
         self.K = K
@@ -956,7 +959,7 @@ class Option:
     ##MLMC function
     def mlmc(self,eps,M=2,anti=False,N0=10**3, warm_start=True):
         """
-        Runs MLMC method for given option (e.g. European) which returns an array of sums at each level.
+        Runs MLMC algorithm for given option (e.g. European) which returns an array of sums at each level.
         ________________
         Example usage:
         Euro=Euro_GBM()
@@ -975,8 +978,10 @@ class Option:
             sums(np.array) : sums of payoff diffs at each level and sum of payoffs at fine level, each column is a level
             N(np.array of ints) : final number of samples at each level
         """
-        alpha_0=self.alpha_0
-        alpha=alpha_0
+        #Orders of convergence
+        alpha=max(0,self.alpha_0)
+        beta=max(0,self.beta_0)
+        
         L=2
 
         V=np.zeros(L+1) #Initialise variance vector of each levels' variance
@@ -994,18 +999,27 @@ class Option:
             N+=dN #Increment samples taken counter for each level
             Yl=np.abs(sums[0,:])/N
             V=np.maximum((sums[1,:]/N)-(Yl)**2,0) #Calculate variance based on updated samples
-            sqrt_V=np.sqrt(V)
-            Nl_new=np.ceil((2*eps**-2)*np.sum(sqrt_V*sqrt_h)*(sqrt_V/sqrt_h)) #Estimate optimal number of samples at each level
-            dN=np.maximum(0,Nl_new-N) #Number of additional samples
-
-            if alpha_0==None: #Estimate order of weak convergence using LR
-                #Yl=(M^alpha-1)khl^alpha=(M^alpha-1)k(TM^-l)^alpha=((M^alpha-1)kT^alpha)M^-l*alpha
+            
+            ##Fix to deal with zero variance or mean by linear extrapolation for Digital options
+            Yl[3:]=np.maximum(Yl[3:],Yl[2:L]*M**(-alpha))
+            V[3:]=np.maximum(V[3:],V[2:L]*M**(-beta))
+            
+            if self.alpha_0==None: #Estimate order of weak convergence using LR
+                #Yl=(M^alpha-1)khl^alpha=(M^alpha-1)k(TM^-l)^alpha=((M^alpha-1)kT^alpha)M^(-l*alpha)
                 #=>log(Yl)=log(k(M^alpha-1)T^alpha)-alpha*l*log(M)
-                #This was actually incorrectly implemented by pefarrell until we corrected it!
                 X=np.ones((L,2))
                 X[:,0]=np.arange(1,L+1)
                 a = np.linalg.lstsq(X,np.log(Yl[1:]),rcond=None)[0]
                 alpha = max(0.5,-a[0]/np.log(M))
+            if self.beta_0==None: #Estimate order of variance convergence using LR
+                X=np.ones((L,2))
+                X[:,0]=np.arange(1,L+1)
+                b = np.linalg.lstsq(X,np.log(V[1:]),rcond=None)[0]
+                beta = max(0.5,-b[0]/np.log(M))
+
+            sqrt_V=np.sqrt(V)
+            Nl_new=np.ceil((2*eps**-2)*np.sum(sqrt_V*sqrt_h)*(sqrt_V/sqrt_h)) #Estimate optimal number of samples/level
+            dN=np.maximum(0,Nl_new-N) #Number of additional samples
         
             if sum(dN > 0.01*N) == 0: #Almost converged
                 if max(Yl[-2]/(M**alpha),Yl[-1])>(M**alpha-1)*eps*np.sqrt(0.5):
@@ -1018,9 +1032,13 @@ class Option:
                     sums=np.concatenate((sums,np.zeros((7,1))),axis=1)
                     
         print(f'Estimated alpha = {alpha}')
+        print(f'Estimated beta = {beta}')
+
         if warm_start:
             self.alpha_0=alpha #update with estimate of option alpha
+            self.beta_0=beta #update with estimate of option beta
             print(f'    Saved estimated alpha_0 = {alpha}')
+            print(f'    Saved estimated beta_0 = {beta}')
         return sums,N
 
 class JumpDiffusion_Option(Option):
@@ -1827,7 +1845,7 @@ def Giles_plot(option,eps,markers,label,fig,M=2,N0=10**3,anti=False,Lmax=8,Nsamp
         s='$\\alpha_{anti}$ = %s' % round(alpha,2)
     else:
         s='$\\alpha$ = {}'.format(round(alpha,2))
-    t = axis_list[1].annotate(s, (Lmax/2, np.log(means_dp[3])/np.log(M)), fontsize=markersize,
+    t = axis_list[1].annotate(s, (Lmax/2, np.log(means_dp[1])/np.log(M)), fontsize=markersize,
             size=2*markersize, bbox=dict(ec='None',facecolor='None',lw=2))
     
     #Label number of levels plot
